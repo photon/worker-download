@@ -1,0 +1,26 @@
+language: php
+
+php:
+  - 5.3
+  - 5.4
+  - 5.5
+
+matrix:
+  fast_finish: true
+
+before_script:
+  - sudo locale-gen fr_FR fr_FR.UTF-8
+  - locale -a  
+  - echo "extension = zmq.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+  - printf "yes\nyes\nno\nyes\n" | pecl install pecl_http
+  - echo 'extension = "mongo.so"' >> ~/.phpenv/versions/$(phpenv version-name)/etc/conf.d/travis.ini
+  - composer self-update
+  - mkdir test
+  - cd test
+  - composer init --no-interaction --stability=dev
+  - composer require "photon/photon:dev-develop"
+  - composer require "photon/worker-download:dev-master"
+  - cp vendor/photon/worker-download/phpunit.xml .
+  
+script: phpunit -c phpunit.xml
+
