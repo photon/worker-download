@@ -53,12 +53,17 @@ class PhotonDownload extends SyncTask
      *  Send a message to the task to perform the requested download,
      *  The iterator will be serialized and unserialize.
      */
-    static public function createDownload($request, $iterator)
+    static public function createDownload($request, $response)
     {
+        // Ensure the response content is a iterator
+        if (is_array($response) || $response instanceof \Traversable) {
+            throw new Exception('The content of the reponse is not iterable');
+        }
+
         $payload = array(
             'action' => 'download',
             'id' => $request->mess->conn_id,
-            'response' => serialize($iterator),
+            'response' => serialize($response),
         );
 
         $runner = new \photon\task\Runner();
