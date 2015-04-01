@@ -1,0 +1,12 @@
+<phpunit colors="true"
+         bootstrap="vendor/photon/photon/src/photon/testbootstrap.php"
+>
+    <testsuites>
+        <testsuite name="Worker download for Photon">
+             <directory>vendor/photon/worker-download/tests/</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="photon.config" value="vendor/photon/worker-download/config.test.php"/>
+    </php>
+</phpunit>
