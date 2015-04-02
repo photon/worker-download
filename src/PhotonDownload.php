@@ -56,7 +56,7 @@ class PhotonDownload extends SyncTask
     static public function createDownload($request, $response)
     {
         // Ensure the response content is a iterator
-        if (is_array($response) || $response instanceof \Traversable) {
+        if (is_array($response->content) === false && ($response->content instanceof \Traversable) === false) {
             throw new Exception('The content of the reponse is not iterable');
         }
 
