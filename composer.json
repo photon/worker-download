@@ -21,7 +21,7 @@
         }
     ],
     "require": {
-        "photon/photon": ">=0.3.0",
+        "photon/photon": "dev-develop",
         "phuedx/tnetstring": "*"
     },
     "autoload": {

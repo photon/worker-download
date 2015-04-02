@@ -3,6 +3,7 @@
 namespace photon\task;
 use \photon\config\Container as Conf;
 use \photon\log\Log;
+use photon\mongrel2\Connection;
 
 /*
  *  A worker to stream just-in-time a HTTP Response from a iterator
@@ -16,34 +17,38 @@ use \photon\log\Log;
 class PhotonDownload extends SyncTask
 {
     const MAX_CHUNCK = 16;
-    public $m2ControlAddress = null;
-
-    private $socketControl = null;
-    private $socket = null;
+    private $connections = array();
     private $jobs = array();
 
     public function __construct($conf = array())
     {
         parent::__construct($conf);
-        var_dump($this->name);
 
-        // Connect to the mongrel2 control port
-        $this->socketControl = new \ZMQSocket($this->ctx, \ZMQ::SOCKET_REQ);
-        Log::info('Connecting to control port : ' . $this->m2ControlAddress);
-        $this->socketControl->connect($this->m2ControlAddress);
-
-        // Connect to the out-going mongrel2 port
-        $this->socket = new \ZMQSocket($this->ctx, \ZMQ::SOCKET_PUB);
-        $this->socket->setSockOpt(\ZMQ::SOCKOPT_IDENTITY, 'PhotonDownload');
+        // Connect to each mongrel2 servers on port PUB & Control only
+        // The worker do not want to receive HTTP requests from mongrel2
         $servers = Conf::f('server_conf', null);
         if ($servers === null) {
             Log::fatal("No mongrel2 servers in the configuration");
             Log::flush();
             exit(0);
         }
-        foreach ($servers['pub_addrs'] as $addr) {
-            Log::info('Connecting to PUB addrs : ' . $addr);
-            $this->socket->connect($addr);
+    
+        foreach ($servers as $server) {
+            // Ignore servers without control port
+            if (isset($server['ctrl_addr']) === false || $server['ctrl_addr'] === null ||
+                isset($server['pub_addr']) === false  || $server['pub_addr'] === null) {
+                 continue;
+            }
+
+            $connection = new Connection(null, $server['pub_addr'], $server['ctrl_addr']);
+            $connection->connect();
+            $this->connections[] = $connection;
+            $this->jobs[] = array();
+        }
+        if (count($this->connections) === 0) {
+            Log::fatal('No mongrel2 servers with control port detected');
+            Log::flush();
+            exit(0);
         }
 
         Log::info('Task ready, ' . gmdate('c'));
@@ -63,19 +68,12 @@ class PhotonDownload extends SyncTask
         $payload = array(
             'action' => 'download',
             'id' => $request->mess->conn_id,
+            'pub' => $request->conn->getPubAddr(),
             'response' => serialize($response),
         );
 
         $runner = new \photon\task\Runner();
         return $runner->run('PhotonDownload', $payload);
-    }
-
-    /*
-     *  Serialize and send the chunck to the mongrel2
-     */
-    private function send($id, $chunck)
-    {
-        $this->socket->send('PhotonDownload' . ' ' . \strlen($id) . ':' . $id . ', ' . $chunck);
     }
 
     /*
@@ -88,13 +86,25 @@ class PhotonDownload extends SyncTask
 
         if ($payload->action === 'download') {
             $id = $payload->id;
+            $pub = $payload->pub;
             $response = unserialize($payload->response);
+
+            // Ensure the mongrel2 connection exist to process this download
+            list($connectionIndex, $connection) = $this->getConnectionFromPubAddr($pub);
+            if ($connection === null) {
+                $mess = sprintf('%s %s %s', $client, $taskname, json_encode(array(
+                    'ok' => false,
+                    'msg' => 'Download worker do not known this mongrel2 server',
+                )));
+                $socket->send($mess);
+                return;
+            }
 
             // Send headers and first chunck, background task will send last parts later
             $firstChunck = $response->getHeaders() . "\r\n" . $response->content->current();
             $sz = strlen($firstChunck);
-            $this->send($id, $firstChunck);
-            $this->jobs[$id] = array(
+            $connection->send('PhotonDownload', $id, $firstChunck);
+            $this->jobs[$connectionIndex][$id] = array(
                 'iterator' => $response->content,
                 'bytes_written' => 0,
                 'bytes_sent' => $sz,
@@ -102,16 +112,30 @@ class PhotonDownload extends SyncTask
                 'last_chunck' => array_fill(0, self::MAX_CHUNCK, 0),
             );
             
-            array_shift($this->jobs[$id]['last_chunck']);
-            array_push($this->jobs[$id]['last_chunck'], $sz);
+            array_shift($this->jobs[$connectionIndex][$id]['last_chunck']);
+            array_push($this->jobs[$connectionIndex][$id]['last_chunck'], $sz);
 
             $mess = sprintf('%s %s %s', $client, $taskname, json_encode(array('ok' => true)));
             $socket->send($mess);
             return;
         }
 
-        $mess = sprintf('%s %s %s', $client, $taskname, json_encode(array('ok' => false)));
+        $mess = sprintf('%s %s %s', $client, $taskname, json_encode(array(
+            'ok' => false,
+            'msg' => 'Unknown action',
+        )));
         $socket->send($mess);
+    }
+
+    public function getConnectionFromPubAddr($addr)
+    {
+        foreach($this->connections as $index => $connection) {
+            if ($connection->getPubAddr() === $addr) {
+                return array($index, $connection);
+            }
+        }
+
+        return null;
     }
 
     /*
@@ -127,9 +151,15 @@ class PhotonDownload extends SyncTask
         }
         $lastRefresh = $now;
 
+        foreach($this->connections as $connectionIndex => $connection) {
+            $this->_loop($connectionIndex, $connection, $this->jobs[$connectionIndex]);
+        }
+    }
+
+    public function _loop($connectionIndex, $connection, &$jobs)
+    {
         // Refresh statistics from mongrel2
-        $this->socketControl->send('26:6:status,13:4:what,3:net,}]');
-        $stats = \tnetstring_decode($this->socketControl->recv());
+        $stats = \tnetstring_decode($connection->control('26:6:status,13:4:what,3:net,}]'));
         if (isset($stats['rows'][0]) === false) {
             return;
         }
@@ -140,9 +170,11 @@ class PhotonDownload extends SyncTask
         }
         
         // Mark all jobs as inactive to detect disconnected
-        foreach($this->jobs as $key => $job) {
-            $this->jobs[$key]['active'] = false;
-            $this->jobs[$key]['bytes_written_last'] = $this->jobs[$key]['bytes_written'];
+        foreach($jobs as $key => $job) {
+            if (isset($jobs[$key]) === true) {
+                $jobs[$key]['active'] = false;
+                $jobs[$key]['bytes_written_last'] = $jobs[$key]['bytes_written'];
+            }
         }
 
         // Update internal statistics
@@ -151,21 +183,21 @@ class PhotonDownload extends SyncTask
                 continue;
             }
 
-            if (isset($this->jobs[$row[0]])) {
-                $this->jobs[$row[0]]['bytes_written'] = $row[7];
-                $this->jobs[$key]['active'] = true;
+            if (isset($jobs[$row[0]])) {
+                $jobs[$row[0]]['bytes_written'] = $row[7];
+                $jobs[$key]['active'] = true;
             }
         }
 
         // Remove disconnected
-        foreach($this->jobs as $key => $job) {
+        foreach($jobs as $key => $job) {
             if ($job['active'] === false) {
-                unset($this->jobs[$key]);
+                unset($jobs[$key]);
             }
         }
 
         // Grow mongrel2 buffer
-        foreach($this->jobs as $key => &$job) {
+        foreach($jobs as $key => &$job) {
             // bytes transfered last second per the client
             $size = $job['bytes_written'] - $job['bytes_written_last'];
 
@@ -202,7 +234,7 @@ class PhotonDownload extends SyncTask
                 array_shift($job['last_chunck']);
                 array_push($job['last_chunck'], $sz);
 
-                $this->send($key, $buffer);
+                $connection->send('PhotonDownload', $key, $buffer);
             } while (true);
         }
         unset($job);
