@@ -21,7 +21,7 @@
         }
     ],
     "require": {
-        "photon/photon": "dev-develop",
+        "photon/photon": "~0.5.0",
         "phuedx/tnetstring": "*"
     },
     "autoload": {
