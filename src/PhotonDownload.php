@@ -160,7 +160,11 @@ class PhotonDownload extends SyncTask
     public function _loop($connectionIndex, $connection, &$jobs)
     {
         // Refresh statistics from mongrel2
-        $stats = \tnetstring_decode($connection->control('26:6:status,13:4:what,3:net,}]'));
+        $tnetstring = $connection->control('26:6:status,13:4:what,3:net,}]');
+        if ($tnetstring === null) {
+            return;
+        }
+        $stats = \tnetstring_decode($tnetstring);
         if (isset($stats['rows'][0]) === false) {
             return;
         }
