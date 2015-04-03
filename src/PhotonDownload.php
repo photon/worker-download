@@ -33,13 +33,14 @@ class PhotonDownload extends SyncTask
             exit(0);
         }
     
-        foreach ($servers as $server) {
+        foreach ($servers as $serverId => $server) {
             // Ignore servers without control port
             if (isset($server['ctrl_addr']) === false || $server['ctrl_addr'] === null ||
                 isset($server['pub_addr']) === false  || $server['pub_addr'] === null) {
                  continue;
             }
 
+            Log::info('Server #' . $serverId . ' Control = ' . $server['ctrl_addr'] . '    Pub = ' . $server['pub_addr']);
             $connection = new Connection(null, $server['pub_addr'], $server['ctrl_addr']);
             $connection->connect();
             $this->connections[] = $connection;
@@ -221,6 +222,10 @@ class PhotonDownload extends SyncTask
                 $it = &$job['iterator'];
                 $it->next();
                 if ($it->valid() === false) {
+
+                    // Notify mongrel2 about the end
+                    $connection->send('PhotonDownload', $key, '');
+
                     // End of the iterator
                     unset($it);
                     unset($this->jobs[$key]);
