@@ -22,7 +22,7 @@
     ],
     "require": {
         "photon/photon": ">=0.3.0",
-        "phuedx/tnetstring": "*"
+        "phuedx/tnetstring": "~2.0.0"
     },
     "autoload": {
         "psr-4": {
