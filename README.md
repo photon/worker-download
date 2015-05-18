@@ -19,7 +19,6 @@ Quick start
     ),
     'photon_task_PhotonDownload' => array(
         'sub_addr' => 'tcp://127.0.0.1:11011',
-        'm2ControlAddress' => 'tcp://127.0.0.1:9999',
     ),
 
 3) Start the worker

@@ -18,7 +18,6 @@ before_script:
   - mkdir test
   - cd test
   - composer init --no-interaction --stability=dev
-  - composer require "photon/photon:dev-develop"
   - composer require "photon/worker-download:dev-master"
   - cp vendor/photon/worker-download/phpunit.xml .
   
