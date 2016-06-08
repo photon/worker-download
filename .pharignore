@@ -4,6 +4,7 @@ CONTRIBUTORS.md
 config.test.php
 README.md
 tests/
+scripts/
 .pharignore
 .travis.yml
 .gitignore
