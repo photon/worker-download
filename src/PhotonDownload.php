@@ -98,6 +98,7 @@ class PhotonDownload extends SyncTask
                     'msg' => 'Download worker do not known this mongrel2 server',
                 )));
                 $socket->send($mess);
+                Log::debug('Download worker do not known this mongrel2 server, pub=' . $pub);
                 return;
             }
 
@@ -118,6 +119,7 @@ class PhotonDownload extends SyncTask
 
             $mess = sprintf('%s %s %s', $client, $taskname, json_encode(array('ok' => true)));
             $socket->send($mess);
+            Log::debug('New connection');
             return;
         }
 
@@ -125,6 +127,7 @@ class PhotonDownload extends SyncTask
             'ok' => false,
             'msg' => 'Unknown action',
         )));
+        Log::debug('Unknown action');
         $socket->send($mess);
     }
 
@@ -152,7 +155,9 @@ class PhotonDownload extends SyncTask
         }
         $lastRefresh = $now;
 
+        Log::debug('Connections actives to mongrel2: ' . count($this->connections));
         foreach($this->connections as $connectionIndex => $connection) {
+            Log::debug('#' . $connectionIndex . ' Jobs: ' . count($this->jobs[$connectionIndex]));
             $this->_loop($connectionIndex, $connection, $this->jobs[$connectionIndex]);
         }
     }
