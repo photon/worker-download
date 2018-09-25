@@ -12,7 +12,7 @@ use photon\mongrel2\Connection;
  *  Technical Note :
  *      Mongrel2 will kill the HTTP connection, if the application handler send
  *      too much data chunck. The actual mongrel2 limit is 16 chuncks. So sending
- *      too small chunck can have a negative impact on the download bandwidth. 
+ *      too small chunck can have a negative impact on the download bandwidth.
  */
 class PhotonDownload extends SyncTask
 {
@@ -32,7 +32,7 @@ class PhotonDownload extends SyncTask
             Log::flush();
             exit(0);
         }
-    
+
         foreach ($servers as $serverId => $server) {
             // Ignore servers without control port
             if (isset($server['ctrl_addr']) === false || $server['ctrl_addr'] === null ||
@@ -113,7 +113,7 @@ class PhotonDownload extends SyncTask
                 'active' => true,
                 'last_chunck' => array_fill(0, self::MAX_CHUNCK, 0),
             );
-            
+
             array_shift($this->jobs[$connectionIndex][$id]['last_chunck']);
             array_push($this->jobs[$connectionIndex][$id]['last_chunck'], $sz);
 
@@ -167,6 +167,7 @@ class PhotonDownload extends SyncTask
         // Refresh statistics from mongrel2
         $tnetstring = $connection->control('26:6:status,13:4:what,3:net,}]');
         if ($tnetstring === null) {
+            Log::debug('Failed to read mongrel2 status with the control port');
             return;
         }
         $stats = \tnetstring_decode($tnetstring);
@@ -178,7 +179,7 @@ class PhotonDownload extends SyncTask
             unset($stats['rows']);
             $stats['rows'][0] = $r;
         }
-        
+
         // Mark all jobs as inactive to detect disconnected
         foreach($jobs as $key => $job) {
             if (isset($jobs[$key]) === true) {
@@ -200,25 +201,24 @@ class PhotonDownload extends SyncTask
         }
 
         // Remove disconnected
-        foreach($jobs as $key => $job) {
-            if ($job['active'] === false) {
-                unset($jobs[$key]);
-            }
-        }
+        $jobs = array_filter($jobs, function ($value) {
+            return $value['active'] === true;
+        });
 
         // Grow mongrel2 buffer
         foreach($jobs as $key => &$job) {
             // bytes transfered last second per the client
             $size = $job['bytes_written'] - $job['bytes_written_last'];
 
-            // Try to increase the bandwidth, maybe the client can follow             
+            // Try to increase the bandwidth, maybe the client can follow
             $size = ($size < 1024 * 1024 /* 1MB */) ? 1024 * 1024 : $size;
-            $overcommit = ($job['bytes_written'] === $job['bytes_sent']) ? 2 : 1;   
-            
+            $overcommit = ($job['bytes_written'] === $job['bytes_sent']) ? 2 : 1;
+
             // Iterate on the data, we can not known numbers and size of chuncks in the iterator
             do {
                 // Ensure the mongrel2 buffer is at least 1MB or the size transfered last seconds
                 if ($job['bytes_sent'] - $job['bytes_written'] > ($size * $overcommit)) {
+                    Log::debug('Buffer is still full for' . $key);
                     break;   // Lot of data available in mongrel2
                 }
 
@@ -231,6 +231,7 @@ class PhotonDownload extends SyncTask
                 $it = &$job['iterator'];
                 $it->next();
                 if ($it->valid() === false) {
+                    Log::debug('End of the iterator for ' . $key);
 
                     // Notify mongrel2 about the end
                     $connection->send('PhotonDownload', $key, '');
@@ -240,7 +241,7 @@ class PhotonDownload extends SyncTask
                     unset($this->jobs[$key]);
                     break;
                 }
-        
+
                 $buffer = $it->current();
                 $sz = strlen($buffer);
 
@@ -249,9 +250,10 @@ class PhotonDownload extends SyncTask
                 array_push($job['last_chunck'], $sz);
 
                 $connection->send('PhotonDownload', $key, $buffer);
+                Log::debug('Push ' . $sz . 'bytes for ' . $key);
+
             } while (true);
         }
         unset($job);
     }
 }
-
